@@ -12,7 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with:
+          node-version: 22
+          cache: npm
       - run: npm ci
       - id: t
         run: |
@@ -30,7 +32,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with:
+          node-version: 22
+          cache: npm
       - run: npm ci
       - run: npx remotion browser ensure
       - name: Render part
@@ -43,7 +47,10 @@ jobs:
             --frames=$S-$E --muted --gl=swangle --concurrency=4 \
             --codec=h264 --crf=17 --x264-preset=slow --pixel-format=yuv420p --timeout=120000
       - uses: actions/upload-artifact@v4
-        with: { name: part${{ matrix.part }}, path: out/part${{ matrix.part }}.mp4, retention-days: 1 }
+        with:
+          name: part${{ matrix.part }}
+          path: out/part${{ matrix.part }}.mp4
+          retention-days: 1
 
   audio:
     needs: plan
@@ -51,19 +58,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
+        with:
+          node-version: 22
+          cache: npm
       - run: npm ci
       - run: npx remotion browser ensure
       - run: npx remotion render src/index.ts DigitalTwinExplainer out/audio.wav --codec=wav --gl=swangle
       - uses: actions/upload-artifact@v4
-        with: { name: audio, path: out/audio.wav, retention-days: 1 }
+        with:
+          name: audio
+          path: out/audio.wav
+          retention-days: 1
 
   merge:
     needs: [video, audio]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: parts, merge-multiple: true }
+        with:
+          path: parts
+          merge-multiple: true
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Concatenate, loudness-normalise and mux
         run: |
@@ -74,4 +88,7 @@ jobs:
           ffmpeg -y -i video.mp4 -i audio_norm.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k -shortest -movflags +faststart stim-ai-digital-twin-pcb-720p.mp4
           ffprobe -v error -show_entries format=duration:stream=codec_name,width,height,r_frame_rate -of compact stim-ai-digital-twin-pcb-720p.mp4
       - uses: actions/upload-artifact@v4
-        with: { name: final, path: stim-ai-digital-twin-pcb-720p.mp4, retention-days: 3 }
+        with:
+          name: final
+          path: stim-ai-digital-twin-pcb-720p.mp4
+          retention-days: 3
