@@ -1,3 +1,14 @@
+// prints scene starts using the same rules as src/timeline.ts (keep in sync)
 import vo from "../src/vo.json" with { type: "json" };
-const D=[["hook",24,14],["factory",12,18],["mirror",12,14],["ai",12,14],["line",12,16],["predict",12,16],["simulate",12,16],["maintain",12,16],["limits",12,14],["payoff",12,14],["cta",12,150]];
-let c=0;for(const [id,l,t] of D){const v=vo.find(x=>x.id===id);const d=l+Math.ceil(v.duration*30)+t;console.log(id,c,d,"vo@",c+l);c+=d-12;}
+import fs from "node:fs";
+const src = fs.readFileSync(new URL("../src/timeline.ts", import.meta.url), "utf8");
+const OV = +src.match(/OVERLAP = (\d+)/)[1];
+const D = [...src.matchAll(/\{ id: "(\w+)", lead: (\d+), tail: (\d+) \}/g)].map((m) => [m[1], +m[2], +m[3]]);
+let c = 0;
+for (const [id, l, t] of D) {
+  const v = vo.find((x) => x.id === id);
+  const d = l + Math.ceil(v.duration * 30) + t;
+  console.log(id.padEnd(9), "from", String(c).padStart(5), "dur", String(d).padStart(4), "vo@", c + l, `(${((c + l) / 30).toFixed(2)}s)`);
+  c += d - OV;
+}
+console.log("TOTAL", c + OV, ((c + OV) / 30).toFixed(2) + "s");

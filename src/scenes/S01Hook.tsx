@@ -1,156 +1,147 @@
 import React from "react";
-import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Sequence, interpolate, useCurrentFrame } from "remotion";
 import { Stock } from "../components/frame";
-import { Brackets, Eyebrow, GridBg, Reveal, Words } from "../components/ui";
+import { Bg, Pop, Tag, Words } from "../components/ui";
+import { MM } from "../three/board";
+import { Pcb } from "../three/Pcb";
+import { Cam, Stage, Studio, camPath, project } from "../three/Stage";
 import { cue } from "../timeline";
-import { C, EASE_IN_OUT, FONT, MONO, prog } from "../theme";
+import { C, EASE_BACK, FONT, MONO, lerp, prog } from "../theme";
 
 const ID = "hook";
+const U3: [number, number, number] = [17 * MM, 0.05, 7 * MM];
 
-/** Line-art flight-simulator HUD. */
-const Hud: React.FC<{ crash: number }> = ({ crash }) => {
+const PassStack: React.FC<{ at: number }> = ({ at }) => {
   const f = useCurrentFrame();
-  const roll = Math.sin(f / 40) * 6 + crash * 38;
-  const pitch = Math.sin(f / 55) * 14 + crash * 60;
-  const ladder = [-30, -20, -10, 10, 20, 30];
   return (
-    <svg viewBox="0 0 1280 720" width="100%" height="100%" style={{ position: "absolute", inset: 0 }}>
-      <defs>
-        <clipPath id="hudclip">
-          <circle cx={640} cy={350} r={230} />
-        </clipPath>
-      </defs>
-      <circle cx={640} cy={350} r={232} fill="none" stroke={C.lineStrong} strokeWidth={1.5} />
-      <g clipPath="url(#hudclip)">
-        <g transform={`rotate(${roll} 640 350) translate(0 ${pitch})`}>
-          <rect x={300} y={-200} width={680} height={550} fill="rgba(124,240,176,0.05)" />
-          <line x1={300} x2={980} y1={350} y2={350} stroke={C.mint} strokeWidth={2} />
-          {ladder.map((d) => (
-            <g key={d}>
-              <line x1={600} x2={680} y1={350 - d * 5} y2={350 - d * 5} stroke={C.mint} strokeOpacity={0.55} strokeWidth={1.3} />
-              <text x={690} y={354 - d * 5} fill={C.mint} fillOpacity={0.6} fontFamily={MONO} fontSize={11}>
-                {Math.abs(d)}
-              </text>
-            </g>
-          ))}
-        </g>
-      </g>
-      {/* fixed aircraft reference */}
-      <path d="M560 350 h50 l15 14 l15 -14 h50" fill="none" stroke={C.amber} strokeWidth={3} />
-      {/* altitude + speed tapes */}
-      {[0, 1].map((side) => {
-        const x = side ? 930 : 280;
-        const val = side ? 3200 - f * 6 - crash * 2800 : 142 - crash * 40;
+    <div style={{ position: "absolute", right: 70, top: 120, display: "flex", flexDirection: "column", gap: 10 }}>
+      {[4809, 4810, 4811, 4812].map((n, i) => {
+        const p = prog(f, at + i * 7, 12, EASE_BACK);
         return (
-          <g key={side}>
-            <rect x={x} y={200} width={70} height={300} fill="rgba(6,17,13,0.6)" stroke={C.lineStrong} />
-            {Array.from({ length: 11 }).map((_, i) => {
-              const y = 200 + ((i * 30 + (f * (side ? 3 : 1.2)) % 30) % 300);
-              return <line key={i} x1={side ? x : x + 50} x2={side ? x + 20 : x + 70} y1={y} y2={y} stroke={C.mint} strokeOpacity={0.5} />;
-            })}
-            <rect x={x - 6} y={336} width={82} height={28} fill={C.bg} stroke={crash > 0.2 ? C.red : C.mint} />
-            <text x={x + 35} y={355} textAnchor="middle" fill={crash > 0.2 ? C.red : C.paper} fontFamily={MONO} fontSize={14}>
-              {Math.max(0, Math.round(val))}
-            </text>
-          </g>
+          <div
+            key={n}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              padding: "12px 18px",
+              borderRadius: 14,
+              background: C.white,
+              boxShadow: C.shadow,
+              opacity: prog(f, at + i * 7, 5),
+              transform: `translateX(${(1 - p) * 60}px) scale(${lerp(0.9, 1, p)})`,
+              fontFamily: FONT,
+              fontWeight: 700,
+              fontSize: 20,
+              color: C.ink,
+              width: 290,
+            }}
+          >
+            <span style={{ fontFamily: MONO, fontSize: 15, color: C.muted }}>BOARD #{n.toLocaleString("en-US")}</span>
+            <span style={{ marginLeft: "auto", color: C.white, background: C.green, padding: "4px 12px", borderRadius: 20, fontSize: 16 }}>✓ PASS</span>
+          </div>
         );
       })}
-      {/* heading */}
-      <g>
-        {Array.from({ length: 13 }).map((_, i) => {
-          const x = 460 + ((i * 30 - f * 0.8) % 390 + 390) % 390;
-          return <line key={i} x1={x} x2={x} y1={598} y2={i % 3 === 0 ? 614 : 607} stroke={C.mint} strokeOpacity={0.5} />;
-        })}
-      </g>
-    </svg>
+    </div>
   );
 };
 
 export const S01Hook: React.FC = () => {
   const f = useCurrentFrame();
-  const tCrash = cue(ID, "crashed");
-  const tBefore = cue(ID, "before");
-  const tAircraft = cue(ID, "aircraft");
-  const tEvery = cue(ID, "every");
-  const tCrashes = cue(ID, "crashes");
-  const tWhere = cue(ID, "where");
-  const tNothing = cue(ID, "nothing");
-  const tPride = cue(ID, "pride");
+  const tThey = cue(ID, "they");
+  const tBut = cue(ID, "but");
+  const tHours = cue(ID, "hours");
+  const tFail = cue(ID, "fail");
+  const tNobody = cue(ID, "nobody");
+  const tOne = cue(ID, "one");
 
-  const bars = prog(f, 0, 30, EASE_IN_OUT) * 62;
-  const glitch = f >= tCrash && f < tBefore;
-  const shake = glitch ? Math.sin(f * 2.3) * 6 * (1 - prog(f, tCrash, 40)) : 0;
-  const footageOut = prog(f, tEvery - 8, 12, EASE_IN_OUT);
-  const hudCrash = prog(f, tCrashes, 22, EASE_IN_OUT) * (1 - prog(f, tWhere - 6, 18));
-  const resets = Math.floor(interpolate(f, [tCrash + 2, tBefore - 4], [0, 9], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  // 3D shots B + C share one stage
+  const cam: Cam = camPath(f, [
+    [tThey - 6, { pos: [-1.9, 0.62, 1.55], target: [-0.6, 0.0, -0.05], fov: 30 }],
+    [tBut, { pos: [0.1, 0.55, 1.45], target: [0.25, 0.0, 0.1], fov: 30 }],
+    [tFail, { pos: [1.25, 0.62, 1.15], target: [0.7, 0.0, 0.28], fov: 26 }],
+    [tNobody + 6, { pos: [1.35, 0.7, 1.05], target: [0.71, 0.0, 0.29], fov: 22 }],
+  ]);
+  const failing = prog(f, tHours + 10, tFail - tHours);
+  const pulse = 0.5 + 0.5 * Math.sin(f / 3);
+  const u3 = project(cam, U3);
+  const hours = Math.min(4, Math.floor(interpolate(f, [tHours, tFail], [0, 4.99], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })));
 
   return (
-    <AbsoluteFill style={{ background: "#000" }}>
-      {/* real cockpit footage */}
-      <AbsoluteFill style={{ opacity: prog(f, 4, 22) * (1 - footageOut), transform: `translateX(${shake}px)` }}>
-        <Stock src="cockpit" dur={tEvery} scale={[1.02, 1.1]} style={{ filter: glitch ? "saturate(0.3) contrast(1.25) hue-rotate(-20deg)" : undefined }} />
-        {glitch ? (
-          <AbsoluteFill
-            style={{
-              background: "repeating-linear-gradient(0deg, rgba(239,83,80,0.10) 0 2px, transparent 2px 5px)",
-              mixBlendMode: "screen",
-              opacity: 0.6 + 0.4 * Math.sin(f),
-            }}
-          />
-        ) : null}
-        {glitch ? (
-          <AbsoluteFill style={{ padding: "110px 0 0 70px", gap: 10, display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-            {Array.from({ length: resets }).map((_, i) => (
-              <div
-                key={i}
-                style={{
-                  fontFamily: MONO,
-                  fontSize: 15,
-                  letterSpacing: "0.14em",
-                  color: C.red,
-                  border: `1px solid ${C.red}`,
-                  padding: "3px 10px",
-                  background: "rgba(0,0,0,0.55)",
-                  transform: `translateX(${i * 14}px)`,
-                }}
-              >
-                SIM CRASH · RESET {String(i + 1).padStart(2, "0")}
-              </div>
-            ))}
-          </AbsoluteFill>
-        ) : null}
-        <Brackets x={300} y={175} w={680} h={150} at={tAircraft - 6} color={C.paper} label="Real aircraft" />
-      </AbsoluteFill>
+    <AbsoluteFill style={{ background: C.bg }}>
+      {/* A: factory, everything looks perfect */}
+      <Sequence durationInFrames={tThey + 2}>
+        <Stock src="pcb_panel" dur={tThey} scale={[1.1, 1.22]} />
+        <AbsoluteFill style={{ background: "linear-gradient(90deg, rgba(243,246,242,0.92) 0%, rgba(243,246,242,0.55) 45%, rgba(243,246,242,0) 75%)" }} />
+        <AbsoluteFill style={{ justifyContent: "center", paddingLeft: 90 }}>
+          <Words text="Looks" at={cue(ID, "looks") - 6} size={110} />
+          <Words text="perfect." at={cue(ID, "perfect") - 6} size={110} mark={["perfect"]} />
+        </AbsoluteFill>
+      </Sequence>
 
-      {/* simulator HUD */}
-      <AbsoluteFill style={{ opacity: footageOut }}>
-        <GridBg opacity={0.6} />
-        <Hud crash={hudCrash} />
-        <div style={{ position: "absolute", left: 70, top: 112 }}>
-          <Eyebrow color={hudCrash > 0.3 ? C.red : C.green}>{hudCrash > 0.3 ? "Simulator · terrain" : "Flight simulator"}</Eyebrow>
-        </div>
-        {hudCrash > 0.35 ? (
-          <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
-            <div style={{ fontFamily: MONO, fontSize: 22, letterSpacing: "0.3em", color: C.red, border: `2px solid ${C.red}`, padding: "8px 20px", background: "rgba(0,0,0,0.6)" }}>
-              CRASH · NO DAMAGE
+      {/* B + C: 3D macro, passing… then failing */}
+      <Sequence from={tThey} durationInFrames={tNobody - tThey + 2}>
+        <AbsoluteFill>
+          <Bg />
+          <Stage cam={cam} exposure={1.0}>
+            <Studio floorY={-0.06} />
+            <Pcb glow={failing > 0.05 ? { U3: `rgb(${Math.round(200 + 55 * pulse)}, 40, 50)` } : {}} />
+          </Stage>
+          <div style={{ opacity: 1 - prog(f, tBut - 4, 8) }}>
+            <PassStack at={tThey - tThey + 2} />
+          </div>
+          {/* time-lapse clock */}
+          <div style={{ position: "absolute", right: 70, top: 110, opacity: prog(f, tBut, 8) }}>
+            <div style={{ padding: "18px 26px", borderRadius: 20, background: C.ink, color: C.white, fontFamily: FONT, boxShadow: C.shadow, textAlign: "center" }}>
+              <div style={{ fontFamily: MONO, fontSize: 14, letterSpacing: "0.16em", color: C.mint }}>FAST-FORWARD</div>
+              <div style={{ fontSize: 64, fontWeight: 800, letterSpacing: "-0.03em", marginTop: 2 }}>+{hours}h</div>
             </div>
+          </div>
+          {failing > 0.1 ? (
+            <div style={{ position: "absolute", left: u3.x, top: u3.y, transform: "translate(-50%,-50%)" }}>
+              {[0, 1].map((k) => {
+                const t = ((f + k * 12) % 24) / 24;
+                return (
+                  <div
+                    key={k}
+                    style={{ position: "absolute", left: -60 * (0.5 + t), top: -60 * (0.5 + t), width: 120 * (0.5 + t), height: 120 * (0.5 + t), borderRadius: "50%", border: `3px solid ${C.red}`, opacity: (1 - t) * failing }}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+          <div style={{ position: "absolute", left: u3.x - 260, top: u3.y + 70 }}>
+            <Pop at={tFail - 6 - tThey}>
+              <Tag color={C.red} solid size={20}>
+                Weak solder joints · U3
+              </Tag>
+            </Pop>
+          </div>
+        </AbsoluteFill>
+      </Sequence>
+
+      {/* D: the line keeps running, nobody notices */}
+      <Sequence from={tNobody} durationInFrames={tOne - tNobody + 2}>
+        <Stock src="boards_conveyor" dur={tOne - tNobody} scale={[1.12, 1.24]} origin="60% 60%" />
+        <AbsoluteFill style={{ background: "rgba(243,246,242,0.12)" }} />
+        <div style={{ position: "absolute", left: 80, bottom: 150 }}>
+          <Pop at={6}>
+            <Tag color={C.green} size={20}>
+              Line running · inspection: all PASS
+            </Tag>
+          </Pop>
+        </div>
+      </Sequence>
+
+      {/* E: one thing can */}
+      <Sequence from={tOne - 2}>
+        <AbsoluteFill style={{ opacity: prog(f - tOne + 2, 0, 4) }}>
+          <Bg tint="#C9F2DA" />
+          <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+            <Words text="One thing can." at={2} size={130} accent={["can."]} />
           </AbsoluteFill>
-        ) : null}
-      </AbsoluteFill>
-
-      {/* cost of a mistake */}
-      <AbsoluteFill style={{ background: `rgba(6,17,13,${0.86 * prog(f, tWhere - 4, 12)})` }} />
-      <AbsoluteFill style={{ justifyContent: "center", paddingLeft: 140 }}>
-        <Words text="Cost of a mistake:" at={tWhere - 2} size={58} weight={500} color="rgba(244,247,243,0.8)" />
-        <Words text="nothing." at={tNothing - 3} size={150} weight={700} color={C.green} style={{ marginTop: 4 }} />
-        <Reveal at={tPride} y={10}>
-          <div style={{ fontFamily: FONT, fontSize: 30, color: C.muted, fontStyle: "italic", marginTop: 10, marginLeft: 8 }}>…but pride.</div>
-        </Reveal>
-      </AbsoluteFill>
-
-      {/* cinematic letterbox */}
-      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: bars, background: "#000" }} />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: bars, background: "#000" }} />
+        </AbsoluteFill>
+      </Sequence>
     </AbsoluteFill>
   );
 };

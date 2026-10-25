@@ -1,236 +1,272 @@
-import React, { useMemo } from "react";
+import React, { useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { rng } from "../theme";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { ALL_PADS, BD, BT, BW, MM, Part, PARTS, boardTexture, markTexture, twinTexture } from "./board";
 
-/**
- * Procedural surface-mount PCB.
- * `scan` (board-local x) splits the board: right of it renders as the physical
- * board, left of it as the digital twin (wireframe + glow). Use scan = -99 for
- * all-physical and +99 for all-twin.
- */
+const TIN = { color: "#CFD5D8", metalness: 1, roughness: 0.25 };
+const TWIN = "#12B76A";
 
-export const BOARD = { w: 4.2, d: 2.8, t: 0.08 };
-const TOP = BOARD.t / 2;
+type Planes = { phys: THREE.Plane[]; twin: THREE.Plane[] };
 
-type Part = { kind: "box" | "cyl"; x: number; z: number; w: number; d: number; h: number; color: string; metal?: number; rough?: number; id?: string };
-
-const MASK = "#0A4128";
-const MASK_TRACE = "#16683F";
-const BLACK = "#16191B";
-const TIN = "#C9CED1";
-const GOLD = "#C9A44A";
-
-const buildParts = (): Part[] => {
-  const r = rng(7);
-  const p: Part[] = [];
-  const chip = (x: number, z: number, w: number, d: number, h: number, id?: string) => p.push({ kind: "box", x, z, w, d, h, color: BLACK, rough: 0.55, id });
-  // main BGA processor + heat-spreader look
-  chip(-0.45, -0.05, 1.0, 1.0, 0.11, "bga");
-  p.push({ kind: "box", x: -0.45, z: -0.05, w: 0.62, d: 0.62, h: 0.125, color: "#8E979C", metal: 0.85, rough: 0.35 });
-  // fine-pitch QFNs
-  chip(1.05, -0.62, 0.46, 0.46, 0.06, "qfn");
-  chip(1.05, 0.55, 0.46, 0.46, 0.06, "qfn2");
-  // SOICs with gull-wing leads
-  for (const [x, z] of [
-    [-1.6, 0.85],
-    [-1.6, -0.85],
-    [0.25, 1.05],
-  ]) {
-    chip(x, z, 0.52, 0.3, 0.07);
-    for (let i = 0; i < 4; i++) {
-      for (const s of [-1, 1]) p.push({ kind: "box", x: x - 0.18 + i * 0.12, z: z + s * 0.19, w: 0.04, d: 0.09, h: 0.025, color: TIN, metal: 0.9, rough: 0.3 });
-    }
-  }
-  // electrolytic caps
-  for (const [x, z] of [
-    [1.75, 1.0],
-    [1.75, -1.0],
-    [-1.05, 1.05],
-  ])
-    p.push({ kind: "cyl", x, z, w: 0.34, d: 0.34, h: 0.36, color: "#AEB6BB", metal: 0.75, rough: 0.35 });
-  // crystal
-  p.push({ kind: "box", x: 0.3, z: -1.0, w: 0.34, d: 0.14, h: 0.08, color: "#B8C0C4", metal: 0.9, rough: 0.25 });
-  // connector header
-  p.push({ kind: "box", x: -1.95, z: 0, w: 0.18, d: 1.3, h: 0.22, color: "#202426", rough: 0.6 });
-  for (let i = 0; i < 8; i++) p.push({ kind: "box", x: -1.95, z: -0.55 + i * 0.157, w: 0.04, d: 0.04, h: 0.34, color: GOLD, metal: 1, rough: 0.25 });
-  // 0603 passives scattered around the ICs
-  const spots: [number, number][] = [];
-  for (let i = 0; i < 70; i++) {
-    const x = -1.9 + r() * 3.8;
-    const z = -1.25 + r() * 2.5;
-    const blocked = p.some((q) => Math.abs(q.x - x) < q.w / 2 + 0.1 && Math.abs(q.z - z) < q.d / 2 + 0.1) || spots.some(([a, b]) => Math.hypot(a - x, b - z) < 0.16);
-    if (blocked) continue;
-    spots.push([x, z]);
-    const rot = r() > 0.5;
-    const body = r() > 0.5 ? "#2B2420" : "#9C7F5C"; // resistor black / ceramic cap tan
-    p.push({ kind: "box", x, z, w: rot ? 0.06 : 0.12, d: rot ? 0.12 : 0.06, h: 0.035, color: body, rough: 0.6 });
-    for (const s of [-1, 1]) p.push({ kind: "box", x: x + (rot ? 0 : s * 0.055), z: z + (rot ? s * 0.055 : 0), w: rot ? 0.065 : 0.02, d: rot ? 0.02 : 0.065, h: 0.04, color: TIN, metal: 0.9, rough: 0.3 });
-  }
-  return p;
+/** Instanced boxes from a list of [x, y, z, sx, sy, sz] (mm, board-local). */
+const Boxes: React.FC<{ items: number[][]; mat: THREE.Material; castShadow?: boolean }> = ({ items, mat, castShadow }) => {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const geo = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
+  useLayoutEffect(() => {
+    const m = new THREE.Matrix4();
+    items.forEach((it, i) => {
+      m.compose(new THREE.Vector3(it[0], it[1], it[2]), new THREE.Quaternion(), new THREE.Vector3(it[3], it[4], it[5]));
+      ref.current!.setMatrixAt(i, m);
+    });
+    ref.current!.instanceMatrix.needsUpdate = true;
+  }, [items]);
+  return <instancedMesh ref={ref} args={[geo, mat, items.length]} castShadow={castShadow} />;
 };
 
-const buildTraces = () => {
-  const r = rng(21);
-  const segs: { x: number; z: number; len: number; horiz: boolean }[] = [];
-  for (let i = 0; i < 46; i++) {
-    let x = -1.9 + r() * 3.8;
-    let z = -1.25 + r() * 2.5;
-    for (let k = 0; k < 3; k++) {
-      const horiz = (i + k) % 2 === 0;
-      const len = 0.2 + r() * 0.9;
-      const dir = r() > 0.5 ? 1 : -1;
-      const nx = horiz ? Math.max(-2, Math.min(2, x + dir * len)) : x;
-      const nz = horiz ? z : Math.max(-1.3, Math.min(1.3, z + dir * len));
-      segs.push({ x: (x + nx) / 2, z: (z + nz) / 2, len: Math.abs(horiz ? nx - x : nz - z), horiz });
-      x = nx;
-      z = nz;
-    }
+const top = BT / 2;
+
+/* ---------- physical parts ---------- */
+const leadItems = (p: Part) => {
+  // gull-wing: shoulder from body + foot on the pad
+  const out: number[][] = [];
+  for (const pad of p.pads) {
+    const horizontal = pad.w > pad.d; // lead runs along x
+    const dir = horizontal ? Math.sign(pad.x - p.x) : Math.sign(pad.z - p.z);
+    const footLen = 0.9;
+    const fx = horizontal ? pad.x + dir * 0.15 : pad.x;
+    const fz = horizontal ? pad.z : pad.z + dir * 0.15;
+    out.push([fx, top + 0.08, fz, horizontal ? footLen : 0.22, 0.14, horizontal ? 0.22 : footLen]);
+    const sx = horizontal ? p.x + dir * (p.w / 2 + 0.35) : pad.x;
+    const sz = horizontal ? pad.z : p.z + dir * (p.d / 2 + 0.35);
+    out.push([sx, top + p.h * 0.45, sz, horizontal ? 0.7 : 0.22, 0.14, horizontal ? 0.22 : 0.7]);
+    out.push([horizontal ? sx + dir * 0.3 : sx, top + p.h * 0.25, horizontal ? sz : sz + dir * 0.3, 0.2, p.h * 0.45, 0.2]);
   }
-  return segs;
+  return out;
 };
 
-const PARTS = buildParts();
-const TRACES = buildTraces();
-
-const twinColor = new THREE.Color("#7CF0B0");
-
-const PartMesh: React.FC<{ part: Part; physPlane: THREE.Plane; twinPlane: THREE.Plane; twinOpacity: number; highlight?: string }> = ({
-  part,
-  physPlane,
-  twinPlane,
-  twinOpacity,
-  highlight,
-}) => {
-  const geo = useMemo(
-    () =>
-      part.kind === "box"
-        ? new THREE.BoxGeometry(part.w, part.h, part.d)
-        : new THREE.CylinderGeometry(part.w / 2, part.w / 2, part.h, 28),
-    [part],
+const PhysPart: React.FC<{ p: Part; planes: Planes; lift: number; glow?: string; tinMat: THREE.Material }> = ({ p, planes, lift, glow, tinMat }) => {
+  const y = top + lift;
+  const emissive = glow ?? "#000000";
+  const ei = glow ? 0.28 : 0;
+  const jointMat = useMemo(
+    () => (glow ? new THREE.MeshStandardMaterial({ color: glow, emissive: glow, emissiveIntensity: 1.6, metalness: 0.3, roughness: 0.3, clippingPlanes: planes.phys }) : tinMat),
+    [glow, tinMat, planes],
   );
-  const edges = useMemo(() => new THREE.EdgesGeometry(geo, 20), [geo]);
-  const hl = highlight && part.id === highlight;
-  return (
-    <group position={[part.x, TOP + part.h / 2, part.z]}>
-      <mesh geometry={geo}>
-        <meshStandardMaterial
-          color={part.color}
-          metalness={part.metal ?? 0.1}
-          roughness={part.rough ?? 0.5}
-          clippingPlanes={[physPlane]}
-          emissive={hl ? "#F2A33A" : "#000000"}
-          emissiveIntensity={hl ? 0.9 : 0}
-        />
+  const clip = planes.phys;
+  const markMat = useMemo(() => {
+    if (p.kind !== "qfp" && p.kind !== "qfn" && p.kind !== "soic" && p.kind !== "ind") return null;
+    const label = p.kind === "qfp" ? "DT-4812" : p.kind === "qfn" ? "Q32" : p.kind === "ind" ? "100" : "S8";
+    return markTexture(label, p.kind === "qfp" ? "2641  CA" : "");
+  }, [p.kind]);
+  const bodyMats = useMemo(() => {
+    const side = new THREE.MeshPhysicalMaterial({ color: "#1B1E20", roughness: 0.55, clearcoat: 0.2, clippingPlanes: clip, emissive, emissiveIntensity: ei });
+    const topM = markMat
+      ? new THREE.MeshPhysicalMaterial({ map: markMat, roughness: 0.5, clearcoat: 0.25, clippingPlanes: clip, emissive, emissiveIntensity: ei * 0.6 })
+      : side;
+    return [side, side, topM, side, side, side];
+  }, [markMat, clip, emissive, ei]);
+
+  const geo = useMemo(() => {
+    if (p.kind === "ind") return new RoundedBoxGeometry(p.w, p.h, p.d, 3, 0.5);
+    if (p.kind === "xtal") return new RoundedBoxGeometry(p.w, p.h, p.d, 3, 0.4);
+    if (p.kind === "usbc") return new RoundedBoxGeometry(p.w, p.h, p.d, 4, 1.4);
+    return new THREE.BoxGeometry(p.w, p.h, p.d);
+  }, [p]);
+  const leads = useMemo(() => (p.kind === "qfp" || p.kind === "soic" ? leadItems(p) : []), [p]);
+  const qfnPads = useMemo(() => p.pads.filter((q) => q.w < 1).map((q) => [q.x, top + 0.12, q.z, q.w * 0.9, 0.22, q.d * 0.7]), [p]);
+
+  if (p.kind === "qfp" || p.kind === "qfn" || p.kind === "soic" || p.kind === "ind") {
+    return (
+      <group>
+        <mesh geometry={geo} material={p.kind === "ind" ? bodyMats[0] : bodyMats} position={[p.x, y + p.h / 2, p.z]} castShadow />
+        {lift < 0.01 && leads.length ? <Boxes items={leads} mat={jointMat} /> : null}
+        {lift < 0.01 && p.kind === "qfn" ? (
+          <Boxes items={qfnPads} mat={jointMat} />
+        ) : null}
+      </group>
+    );
+  }
+  if (p.kind === "r" || p.kind === "c") {
+    const along = p.rot ? "z" : "x";
+    const body = p.kind === "r" ? "#1E1F21" : "#A98157";
+    const L = 1.6;
+    const cap = 0.32;
+    return (
+      <group position={[p.x, y + p.h / 2, p.z]}>
+        <mesh castShadow>
+          <boxGeometry args={along === "x" ? [L - cap * 2, p.h, 0.8] : [0.8, p.h, L - cap * 2]} />
+          <meshStandardMaterial color={body} roughness={0.6} clippingPlanes={clip} emissive={emissive} emissiveIntensity={ei} />
+        </mesh>
+        {[-1, 1].map((s) => (
+          <mesh key={s} position={along === "x" ? [s * (L / 2 - cap / 2), 0, 0] : [0, 0, s * (L / 2 - cap / 2)]} material={jointMat}>
+            <boxGeometry args={along === "x" ? [cap, p.h + 0.02, 0.82] : [0.82, p.h + 0.02, cap]} />
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+  if (p.kind === "elec")
+    return (
+      <group position={[p.x, y, p.z]}>
+        <mesh position={[0, 0.25, 0]} castShadow>
+          <boxGeometry args={[6.6, 0.5, 6.6]} />
+          <meshStandardMaterial color="#222629" roughness={0.7} clippingPlanes={clip} />
+        </mesh>
+        <mesh position={[0, 0.5 + (p.h - 0.5) / 2, 0]} castShadow>
+          <cylinderGeometry args={[p.w / 2, p.w / 2, p.h - 0.5, 40]} />
+          <meshPhysicalMaterial color="#1D3A5F" roughness={0.35} clearcoat={0.8} clippingPlanes={clip} />
+        </mesh>
+        <mesh position={[0, p.h + 0.01, 0]}>
+          <cylinderGeometry args={[p.w / 2 - 0.15, p.w / 2 - 0.15, 0.04, 40]} />
+          <meshStandardMaterial color="#C9CED2" metalness={1} roughness={0.25} clippingPlanes={clip} />
+        </mesh>
+        {[0, Math.PI / 2].map((r) => (
+          <mesh key={r} position={[0, p.h + 0.04, 0]} rotation={[0, r, 0]}>
+            <boxGeometry args={[p.w * 0.7, 0.03, 0.12]} />
+            <meshStandardMaterial color="#6E757A" metalness={0.8} roughness={0.4} clippingPlanes={clip} />
+          </mesh>
+        ))}
+        <mesh position={[-p.w / 2 + 0.3, 0.5 + (p.h - 0.5) / 2, 0]} rotation={[0, 0, 0]}>
+          <boxGeometry args={[0.2, p.h - 0.6, 2.2]} />
+          <meshStandardMaterial color="#9DB0C4" roughness={0.5} clippingPlanes={clip} />
+        </mesh>
+      </group>
+    );
+  if (p.kind === "xtal")
+    return (
+      <mesh position={[p.x, y + p.h / 2, p.z]} castShadow geometry={geo}>
+        <meshStandardMaterial color="#C6CBCE" metalness={1} roughness={0.28} clippingPlanes={clip} />
       </mesh>
+    );
+  if (p.kind === "usbc")
+    return (
+      <group position={[p.x, y + p.h / 2, p.z]}>
+        <mesh castShadow geometry={geo}>
+          <meshStandardMaterial color="#C9CED1" metalness={1} roughness={0.2} clippingPlanes={clip} />
+        </mesh>
+        <mesh position={[-p.w / 2 - 0.01, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
+          <planeGeometry args={[p.d * 0.8, p.h * 0.6]} />
+          <meshStandardMaterial color="#141618" clippingPlanes={clip} />
+        </mesh>
+      </group>
+    );
+  if (p.kind === "led")
+    return (
+      <group position={[p.x, y, p.z]}>
+        <mesh position={[0, 0.25, 0]}>
+          <boxGeometry args={[1.6, 0.5, 0.8]} />
+          <meshStandardMaterial color="#EDEDE6" roughness={0.5} clippingPlanes={clip} />
+        </mesh>
+        <mesh position={[0, 0.55, 0]}>
+          <boxGeometry args={[1.0, 0.2, 0.6]} />
+          <meshStandardMaterial color="#FFD86B" emissive="#FFC23D" emissiveIntensity={0.6} roughness={0.2} clippingPlanes={clip} />
+        </mesh>
+      </group>
+    );
+  if (p.kind === "hdr")
+    return (
+      <group position={[p.x, y, p.z]}>
+        <mesh position={[0, 1.25, 0]} castShadow>
+          <boxGeometry args={[p.w, 2.5, p.d]} />
+          <meshStandardMaterial color="#1C1F21" roughness={0.6} clippingPlanes={clip} />
+        </mesh>
+        {Array.from({ length: 10 }).map((_, i) => (
+          <mesh key={i} position={[(i % 2 ? 1 : -1) * 1.27, 4.3, -5.08 + Math.floor(i / 2) * 2.54]} castShadow>
+            <boxGeometry args={[0.64, 6, 0.64]} />
+            <meshStandardMaterial color="#D6B159" metalness={1} roughness={0.25} clippingPlanes={clip} />
+          </mesh>
+        ))}
+      </group>
+    );
+  return null;
+};
+
+/* ---------- twin parts ---------- */
+const TwinPart: React.FC<{ p: Part; planes: Planes; opacity: number; glow?: string }> = ({ p, planes, opacity, glow }) => {
+  const h = p.kind === "hdr" ? 8.5 : p.h;
+  const geo = useMemo(
+    () => (p.kind === "elec" ? new THREE.CylinderGeometry(p.w / 2, p.w / 2, h, 20) : new THREE.BoxGeometry(p.rot ? p.d : p.w, h, p.rot ? p.w : p.d)),
+    [p, h],
+  );
+  const edges = useMemo(() => new THREE.EdgesGeometry(geo, 25), [geo]);
+  const col = glow ?? TWIN;
+  return (
+    <group position={[p.x, top + h / 2, p.z]}>
       <mesh geometry={geo}>
-        <meshBasicMaterial color={hl ? "#F2A33A" : twinColor} transparent opacity={0.07 * twinOpacity} clippingPlanes={[twinPlane]} depthWrite={false} />
+        <meshBasicMaterial color={col} transparent opacity={(glow ? 0.45 : 0.14) * opacity} clippingPlanes={planes.twin} depthWrite={false} />
       </mesh>
       <lineSegments geometry={edges}>
-        <lineBasicMaterial color={hl ? "#F2A33A" : twinColor} transparent opacity={twinOpacity} clippingPlanes={[twinPlane]} />
+        <lineBasicMaterial color={col} transparent opacity={0.95 * opacity} clippingPlanes={planes.twin} />
       </lineSegments>
     </group>
   );
 };
 
-export const Pcb: React.FC<{
+export type PcbProps = {
+  /** world-x of the physical/twin split: right of it is physical, left is twin. -99 = all physical, 99 = all twin */
   scan?: number;
   twinOpacity?: number;
-  highlight?: string; // part id to glow amber in both states
+  glow?: Record<string, string>;
+  /** mm lift above the board per part ref (for placement shots); hidden when undefined returned as -1 */
+  lift?: (ref: string) => number;
+  /** show wet paste on pads; visible where world-x < pasteX */
+  paste?: boolean;
+  pasteX?: number;
+  pasteShine?: number; // 0 wet grey → 1 reflowed tin
   position?: [number, number, number];
   rotation?: [number, number, number];
   scale?: number;
-}> = ({ scan = -99, twinOpacity = 1, highlight, position, rotation, scale = 1 }) => {
-  // Planes live in world space; the parent group is expected to keep x-axis aligned
-  // with the board for scan effects, so offset the constant by the group's x position.
-  const ox = (position?.[0] ?? 0) / 1;
-  const physPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(1, 0, 0), 0), []);
-  const twinPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0), []);
-  physPlane.constant = -(ox + scan * scale);
-  twinPlane.constant = ox + scan * scale;
+};
 
-  const boardGeo = useMemo(() => new THREE.BoxGeometry(BOARD.w, BOARD.t, BOARD.d), []);
+export const Pcb: React.FC<PcbProps> = ({ scan = -99, twinOpacity = 1, glow = {}, lift, paste, pasteX = 99, pasteShine = 0, position = [0, 0, 0], rotation, scale = 1 }) => {
+  const planes = useMemo<Planes>(() => ({ phys: [new THREE.Plane(new THREE.Vector3(1, 0, 0), 0)], twin: [new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0)] }), []);
+  const pastePlane = useMemo(() => new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0), []);
+  planes.phys[0].constant = -scan;
+  planes.twin[0].constant = scan;
+  pastePlane.constant = pasteX;
+
+  const boardMats = useMemo(() => {
+    const edge = new THREE.MeshStandardMaterial({ color: "#B9AE84", roughness: 0.8, clippingPlanes: planes.phys });
+    const topM = new THREE.MeshPhysicalMaterial({ map: boardTexture(), roughness: 0.42, clearcoat: 0.7, clearcoatRoughness: 0.25, clippingPlanes: planes.phys });
+    const bottom = new THREE.MeshStandardMaterial({ color: "#0C4F2F", roughness: 0.6, clippingPlanes: planes.phys });
+    return [edge, edge, topM, bottom, edge, edge];
+  }, [planes]);
+  const twinMats = useMemo(() => {
+    const side = new THREE.MeshBasicMaterial({ color: TWIN, transparent: true, opacity: 0.25, clippingPlanes: planes.twin, depthWrite: false });
+    const topM = new THREE.MeshBasicMaterial({ map: twinTexture(), transparent: true, clippingPlanes: planes.twin, depthWrite: false });
+    return [side, side, topM, side, side, side];
+  }, [planes]);
+  twinMats.forEach((m) => {
+    m.opacity = (m.map ? 1 : 0.25) * twinOpacity;
+  });
+  const tinMat = useMemo(() => new THREE.MeshStandardMaterial({ ...TIN, clippingPlanes: planes.phys }), [planes]);
+  const pasteMat = useMemo(() => new THREE.MeshStandardMaterial({ color: "#9EA4A7", roughness: 0.95, metalness: 0.2, clippingPlanes: [pastePlane, planes.phys[0]] }), [pastePlane, planes]);
+  pasteMat.roughness = 0.95 - pasteShine * 0.75;
+  pasteMat.metalness = 0.2 + pasteShine * 0.8;
+  pasteMat.color.set(pasteShine > 0.5 ? "#D9DEE1" : "#B3B8BB");
+
+  const boardGeo = useMemo(() => new THREE.BoxGeometry(BW, BT, BD), []);
   const boardEdges = useMemo(() => new THREE.EdgesGeometry(boardGeo), [boardGeo]);
-  const traceGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    const pts: number[] = [];
-    for (const s of TRACES) {
-      if (s.horiz) pts.push(s.x - s.len / 2, TOP + 0.002, s.z, s.x + s.len / 2, TOP + 0.002, s.z);
-      else pts.push(s.x, TOP + 0.002, s.z - s.len / 2, s.x, TOP + 0.002, s.z + s.len / 2);
-    }
-    g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    return g;
-  }, []);
-
-  const silkGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    const pts: number[] = [];
-    const y = TOP + 0.003;
-    for (const q of PARTS) {
-      if (q.color !== BLACK || q.w < 0.25) continue;
-      const hw = q.w / 2 + 0.06;
-      const hd = q.d / 2 + 0.06;
-      const c = [
-        [q.x - hw, q.z - hd],
-        [q.x + hw, q.z - hd],
-        [q.x + hw, q.z + hd],
-        [q.x - hw, q.z + hd],
-      ];
-      for (let i = 0; i < 4; i++) pts.push(c[i][0], y, c[i][1], c[(i + 1) % 4][0], y, c[(i + 1) % 4][1]);
-      pts.push(q.x - hw + 0.02, y, q.z - hd + 0.08, q.x - hw + 0.08, y, q.z - hd + 0.02); // pin-1 chamfer
-    }
-    g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    return g;
-  }, []);
+  const pasteItems = useMemo(() => ALL_PADS.filter((p) => p.w < 3).map((p) => [p.x, top + 0.11, p.z, p.w * 0.86, 0.22, p.d * 0.86]), []);
 
   return (
-    <group position={position} rotation={rotation} scale={scale}>
-      {/* substrate */}
-      <mesh geometry={boardGeo}>
-        <meshPhysicalMaterial color={MASK} roughness={0.5} metalness={0.05} clearcoat={0.9} clearcoatRoughness={0.22} clippingPlanes={[physPlane]} />
-      </mesh>
-      {/* silkscreen outlines */}
-      <lineSegments geometry={silkGeo}>
-        <lineBasicMaterial color="#E8EEE9" transparent opacity={0.75} clippingPlanes={[physPlane]} />
-      </lineSegments>
+    <group position={position} rotation={rotation} scale={scale * MM}>
+      {scan < 99 ? <mesh geometry={boardGeo} material={boardMats} castShadow receiveShadow /> : null}
+      <mesh geometry={boardGeo} material={twinMats} />
       <lineSegments geometry={boardEdges}>
-        <lineBasicMaterial color={twinColor} transparent opacity={twinOpacity} clippingPlanes={[twinPlane]} />
+        <lineBasicMaterial color={TWIN} transparent opacity={twinOpacity} clippingPlanes={planes.twin} />
       </lineSegments>
-      <mesh geometry={boardGeo}>
-        <meshBasicMaterial color={twinColor} transparent opacity={0.05 * twinOpacity} clippingPlanes={[twinPlane]} depthWrite={false} />
-      </mesh>
-      {/* copper under mask (physical) / glowing nets (twin) */}
-      <lineSegments geometry={traceGeo}>
-        <lineBasicMaterial color={MASK_TRACE} clippingPlanes={[physPlane]} />
-      </lineSegments>
-      <lineSegments geometry={traceGeo}>
-        <lineBasicMaterial color={twinColor} transparent opacity={0.55 * twinOpacity} clippingPlanes={[twinPlane]} />
-      </lineSegments>
-      {/* mounting holes */}
-      {[
-        [-1.95, -1.25],
-        [1.95, -1.25],
-        [-1.95, 1.25],
-        [1.95, 1.25],
-      ].map(([x, z], i) => (
-        <mesh key={i} position={[x, TOP + 0.003, z]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.05, 0.1, 24]} />
-          <meshStandardMaterial color={GOLD} metalness={1} roughness={0.3} clippingPlanes={[physPlane]} />
-        </mesh>
-      ))}
-      {PARTS.map((p, i) => (
-        <PartMesh key={i} part={p} physPlane={physPlane} twinPlane={twinPlane} twinOpacity={twinOpacity} highlight={highlight} />
-      ))}
+      {paste ? <Boxes items={pasteItems} mat={pasteMat} /> : null}
+      {PARTS.map((p) => {
+        const l = lift ? lift(p.ref) : 0;
+        if (l < 0) return null;
+        return (
+          <group key={p.ref}>
+            {scan < 99 ? <PhysPart p={p} planes={planes} lift={l} glow={glow[p.ref]} tinMat={tinMat} /> : null}
+            {twinOpacity > 0 && scan > -60 ? <TwinPart p={p} planes={planes} opacity={twinOpacity} glow={glow[p.ref]} /> : null}
+          </group>
+        );
+      })}
     </group>
   );
 };
-
-/** Neutral studio lighting used by all 3D scenes. */
-export const StudioLights: React.FC<{ rim?: string }> = ({ rim = "#1AAB4A" }) => (
-  <>
-    <ambientLight intensity={0.55} />
-    <hemisphereLight args={["#dfeee6", "#0a1712", 0.6]} />
-    <directionalLight position={[4, 7, 5]} intensity={2.2} />
-    <directionalLight position={[-6, 3, -4]} intensity={1.4} color={rim} />
-    <pointLight position={[0, 3, 4]} intensity={8} distance={12} color="#ffffff" />
-  </>
-);
