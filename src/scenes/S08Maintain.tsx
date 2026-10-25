@@ -80,10 +80,10 @@ export const S08Maintain: React.FC = () => {
       <GridBg />
       {/* part 1: nozzle + rejects per shift */}
       <AbsoluteFill style={{ opacity: 1 - part1Out }}>
-        <div style={{ position: "absolute", left: 50, top: 130, opacity: prog(f, tNozzle - 10, 16) }}>
+        <div style={{ position: "absolute", left: 50, top: 130, opacity: prog(f, 2, 16), transform: `translateX(${(1 - prog(f, 2, 22)) * -40}px)` }}>
           <Head />
         </div>
-        <div style={{ position: "absolute", left: 720, top: 160, width: 460 }}>
+        <div style={{ position: "absolute", left: 720, top: 160, width: 460, opacity: prog(f, 8, 16) }}>
           <Eyebrow>Rejects per shift</Eyebrow>
           <svg width={460} height={300} viewBox="0 0 460 300" style={{ marginTop: 12 }}>
             <line x1={0} x2={460} y1={260} y2={260} stroke={C.lineStrong} />
